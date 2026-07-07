@@ -363,7 +363,7 @@ extern class Lua {
 
 	static inline function register(l:State, name:String, f:Dynamic) : Void {
 
-		if(Type.typeof(f) == Type.ValueType.TFunction && !Lua_helper.callbacks.exists(name)){
+		if(Type.typeof(f) == Type.ValueType.TFunction && !Lua_helper.stateStorage[l].callbacks.exists(name)){
 			Lua_helper.add_callback(l, name, f);
 		}
 
@@ -546,11 +546,11 @@ class Lua_helper {
 
 	}
 
-	public static var callbacks:Map<String, Dynamic> = new Map();
+	public static final stateStorage = new LuaStateStorage();
 
 	public static inline function add_callback(l:State, fname:String, f:Dynamic):Bool {
 
-		callbacks.set(fname, f);
+		Lua_helper.stateStorage[l].callbacks.set(fname, f);
 		Lua.add_callback_function(l, fname);
 		return true;
 
@@ -558,7 +558,7 @@ class Lua_helper {
 
 	public static inline function remove_callback(l:State, fname:String):Bool {
 
-		callbacks.remove(fname);
+		Lua_helper.stateStorage[l].callbacks.remove(fname);
 		Lua.remove_callback_function(l, fname);
 		return true;
 
@@ -567,7 +567,7 @@ class Lua_helper {
 	public static var sendErrorsToLua:Bool = true;
 	public static inline function callback_handler(l:State, fname:String):Int {
 		try{
-			var cbf = callbacks.get(fname);
+			var cbf = Lua_helper.stateStorage[l].callbacks.get(fname);
 
 			if(cbf == null) return 0;
 

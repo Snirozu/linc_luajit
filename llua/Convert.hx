@@ -1,19 +1,23 @@
 package llua;
 
 
+import haxe.Constraints.Function;
 import llua.State;
 import llua.Lua;
 import llua.LuaL;
 import llua.Macro.*;
 import haxe.DynamicAccess;
+import haxe.ds.ObjectMap;
+import haxe.Int64;
+
 class Convert {
 
 	/**
 	 * To Lua
 	 */
 	public static var enableUnsupportedTraces = false;
-	//TODO: should be cleared maybe before creating a table?
-	static var _funcs = [];
+	private static var _reflectedFieldsCache:Map<String, Array<String>> = new Map();
+
 	public static function toLua(l:State, val:Any, ?o:Any, ?recursive:Bool = true):Bool {
 		// recursive restricts further object conversion so it doesn't lag and possibly further crash (without a error) due to memory overheap 
 		switch (Type.typeof(val)) {
@@ -27,7 +31,14 @@ class Convert {
 				Lua.pushinteger(l, cast(val, Int));
 
 			case Type.ValueType.TFunction:
-				Lua.pushnumber(l, _funcs.push(val) - 1);
+				var existingIndex:Int = Lua_helper.stateStorage[l].funcs.indexOf(val);
+				
+				if (existingIndex != -1) {
+					Lua.pushnumber(l, existingIndex);
+				} else {
+					Lua.pushnumber(l, Lua_helper.stateStorage[l].funcs.push(val) - 1);
+				}
+				
 				Lua.pushcclosure(l, _anon_callback, 1);
 
 			case Type.ValueType.TFloat:
@@ -38,12 +49,23 @@ class Convert {
 
 			case Type.ValueType.TClass(Array):
 				var arr:Array<Any> = val;
+				var arrayUniqueKey:String = "arr_" + Std.string(arr);
+
+				if (Lua_helper.stateStorage[l].registryCache.exists(arrayUniqueKey)) {
+					Lua.rawgeti(l, Lua.LUA_REGISTRYINDEX, Lua_helper.stateStorage[l].registryCache.get(arrayUniqueKey));
+					return true;
+				}
+
 				Lua.createtable(l, arr.length, 0);
 				for (i => v in arr) {
 					Lua.pushnumber(l, i + 1);
 					toLua(l, v, arr, false);
 					Lua.settable(l, -3);
 				}
+
+				Lua.pushvalue(l, -1);
+				var registryID:Int = LuaL.ref(l, Lua.LUA_REGISTRYINDEX);
+				Lua_helper.stateStorage[l].registryCache.set(arrayUniqueKey, registryID);
 
 			case TClass(_):
 				if (val is haxe.Constraints.IMap) {
@@ -62,8 +84,19 @@ class Convert {
 					return true;
 				}
 
-				Lua.createtable(l, 0, 0);
-				for (key in Type.getInstanceFields(Type.getClass(val))) {
+				var classObj = Type.getClass(val);
+				var className:String = Type.getClassName(classObj);
+				var fields:Array<String> = null;
+
+				if (_reflectedFieldsCache.exists(className)) {
+					fields = _reflectedFieldsCache.get(className);
+				} else {
+					fields = Type.getInstanceFields(classObj);
+					_reflectedFieldsCache.set(className, fields);
+				}
+
+				Lua.createtable(l, 0, fields.length);
+				for (key in fields) {
 					Lua.pushstring(l, key);
 					toLua(l, Reflect.getProperty(val, key), val, false);
 					Lua.settable(l, -3);
@@ -100,7 +133,7 @@ class Convert {
 
 		var numArgs = Lua.gettop(l);
 		var o = null;
-		var f = _funcs[cast Lua.tonumber(l, Lua.upvalueindex(1))];
+		var f = Lua_helper.stateStorage[l].funcs[cast Lua.tonumber(l, Lua.upvalueindex(1))];
 		var args = [];
 		for (i in 0...numArgs)
 			args[i] = fromLua(l, i + 1);
